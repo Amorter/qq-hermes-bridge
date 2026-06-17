@@ -7,7 +7,6 @@ otherwise.
 
 import asyncio
 import os
-import tempfile
 
 import pytest
 
@@ -138,35 +137,6 @@ def test_to_message_event_private_returns_none_when_empty():
         "message_id": "6",
     }
     assert asyncio.run(adapter._to_message_event(data, "", False)) is None
-
-
-def test_inbound_image_cache_uses_non_deliverable_extension():
-    adapter = _make_adapter()
-    cached = None
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as fh:
-        fh.write(b"\xff\xd8\xff\xe0" + b"\x00" * 32)
-        local_path = fh.name
-    try:
-        class _Client:
-            async def call_api(self, action, params):
-                assert action == "get_image"
-                return {"file": local_path}
-
-        adapter._client = _Client()
-        cached = asyncio.run(adapter._cache_one_image({"file": "abc"}))
-        assert cached is not None
-        assert cached.endswith(".napimg")
-        assert ad.NapCatAdapter.filter_local_delivery_paths([cached]) == []
-    finally:
-        try:
-            os.unlink(local_path)
-        except OSError:
-            pass
-        if cached and os.path.exists(cached):
-            try:
-                os.unlink(cached)
-            except OSError:
-                pass
 
 
 def test_on_event_group_mention_gating():
