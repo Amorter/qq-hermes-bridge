@@ -64,7 +64,6 @@ ONEBOT_ACCESS_TOKEN=            # 与 NapCat 里设的一致；没设就留空
 BOT_QQ=123456789               # 机器人 QQ，用于 @提及检测和自身消息过滤
 
 NAPCAT_REQUIRE_MENTION=true     # 群里仅被 @ 时响应（命令如 /stop 不受限）
-NAPCAT_QUOTE_REPLIES=false      # 默认不发 OneBot reply 引用，避免引用图片时每条回复都显示原图预览
 NAPCAT_ALLOW_ALL_USERS=false    # 谁能对话由 gateway 统一鉴权
 NAPCAT_ALLOWED_USERS=123456789  # 逗号分隔的 QQ 白名单
 NAPCAT_HOME_CHANNEL=group:12345 # cron/通知默认投递目标（可选）

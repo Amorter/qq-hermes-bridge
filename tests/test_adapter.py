@@ -7,6 +7,7 @@ otherwise.
 
 import asyncio
 import os
+import tempfile
 
 import pytest
 
@@ -139,37 +140,33 @@ def test_to_message_event_private_returns_none_when_empty():
     assert asyncio.run(adapter._to_message_event(data, "", False)) is None
 
 
-def test_send_omits_reply_segment_by_default():
+def test_inbound_image_cache_uses_non_deliverable_extension():
     adapter = _make_adapter()
-    sent = {}
+    cached = None
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as fh:
+        fh.write(b"\xff\xd8\xff\xe0" + b"\x00" * 32)
+        local_path = fh.name
+    try:
+        class _Client:
+            async def call_api(self, action, params):
+                assert action == "get_image"
+                return {"file": local_path}
 
-    async def fake_send_segments(chat_id, segments):
-        sent["chat_id"] = chat_id
-        sent["segments"] = segments
-        return object()
-
-    adapter._send_segments = fake_send_segments
-    asyncio.run(adapter.send("group:1", "hello", reply_to="123"))
-
-    assert sent["chat_id"] == "group:1"
-    assert sent["segments"] == [{"type": "text", "data": {"text": "hello"}}]
-
-
-def test_send_includes_reply_segment_when_enabled():
-    adapter = _make_adapter(quote_replies=True)
-    sent = {}
-
-    async def fake_send_segments(chat_id, segments):
-        sent["segments"] = segments
-        return object()
-
-    adapter._send_segments = fake_send_segments
-    asyncio.run(adapter.send("group:1", "hello", reply_to="123"))
-
-    assert sent["segments"] == [
-        {"type": "reply", "data": {"id": "123"}},
-        {"type": "text", "data": {"text": "hello"}},
-    ]
+        adapter._client = _Client()
+        cached = asyncio.run(adapter._cache_one_image({"file": "abc"}))
+        assert cached is not None
+        assert cached.endswith(".napimg")
+        assert ad.NapCatAdapter.filter_local_delivery_paths([cached]) == []
+    finally:
+        try:
+            os.unlink(local_path)
+        except OSError:
+            pass
+        if cached and os.path.exists(cached):
+            try:
+                os.unlink(cached)
+            except OSError:
+                pass
 
 
 def test_on_event_group_mention_gating():

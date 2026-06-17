@@ -59,7 +59,6 @@ plugins:
 | `ONEBOT_ACCESS_TOKEN` | 否 | OneBot access token（NapCat 配了才需要） |
 | `BOT_QQ` | 建议 | 机器人 QQ 号，用于 @提及检测与自身消息过滤 |
 | `NAPCAT_REQUIRE_MENTION` | 否 | 群聊中是否仅在被 @ 时响应（默认 `true`） |
-| `NAPCAT_QUOTE_REPLIES` | 否 | 是否用 OneBot `reply` 段引用用户原消息（默认 `false`，避免引用图片时 QQ 在每条回复上显示原图预览） |
 | `NAPCAT_ALLOWED_USERS` | 否 | 允许对话的 QQ 号，逗号分隔 |
 | `NAPCAT_ALLOW_ALL_USERS` | 否 | 是否允许所有人（`true`/`false`） |
 | `NAPCAT_HOME_CHANNEL` | 否 | cron/通知投递目标，如 `group:12345` |
@@ -76,7 +75,6 @@ gateway:
         access_token: ""
         bot_qq: "123456789"
         require_mention: true
-        quote_replies: false
 ```
 
 启动 gateway 后用 `hermes gateway status` 确认 NapCat 平台已配置。
@@ -86,6 +84,7 @@ gateway:
 - **群聊**：`@机器人 你的问题`（或关掉 `NAPCAT_REQUIRE_MENTION`）
 - **私聊**：直接发消息
 - **发图片**：直接发，agent 能"看到"图片内容
+  - 入站图片会缓存在本地供 vision 使用，但缓存文件不会使用可直接投递的图片扩展名，避免 Hermes 把“用户原图缓存路径”误识别成后续要重复发送的附件
 - **命令**（沿用 Hermes 标准斜杠命令）：
   - `/stop` — 中断当前任务
   - `/new` — 开启新对话（清空上下文）

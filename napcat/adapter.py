@@ -87,6 +87,7 @@ class NapCatAdapter(BasePlatformAdapter):
     # The gateway reads this (uppercase class attr) to smart-chunk long replies
     # before calling send(); QQ tolerates a few thousand chars per message.
     MAX_MESSAGE_LENGTH = 4500
+    _INBOUND_IMAGE_CACHE_EXT = ".napimg"
 
     def __init__(self, config, **kwargs):
         super().__init__(config, Platform(PLATFORM_NAME))
@@ -96,10 +97,6 @@ class NapCatAdapter(BasePlatformAdapter):
         self.access_token = os.getenv("ONEBOT_ACCESS_TOKEN") or extra.get("access_token", "")
         self.bot_qq = str(os.getenv("BOT_QQ") or extra.get("bot_qq", "") or "")
         self.require_mention = _env_bool("NAPCAT_REQUIRE_MENTION", bool(extra.get("require_mention", True)))
-        # OneBot ``reply`` segments render as a visible quote in QQ. When the
-        # quoted message is an image, QQ shows an inline preview, which reads
-        # like the bot re-sent the user's original image on every reply.
-        self.quote_replies = _env_bool("NAPCAT_QUOTE_REPLIES", bool(extra.get("quote_replies", False)))
         # Per-deployment override of the chunking limit (shadows the class attr).
         override = extra.get("max_message_length")
         if override:
@@ -240,7 +237,7 @@ class NapCatAdapter(BasePlatformAdapter):
         url = img.get("url")
         if url:
             try:
-                return await cache_image_from_url(url)
+                return await cache_image_from_url(url, ext=self._INBOUND_IMAGE_CACHE_EXT)
             except Exception as exc:  # noqa: BLE001 — fall back to get_image below
                 logger.debug("NapCat: image URL fetch failed (%s); trying get_image", exc)
         # Fallback: resolve bytes by file id via NapCat's get_image.
@@ -250,7 +247,7 @@ class NapCatAdapter(BasePlatformAdapter):
             local = info.get("file")
             if local and os.path.isfile(local):
                 with open(local, "rb") as fh:
-                    return cache_image_from_bytes(fh.read())
+                    return cache_image_from_bytes(fh.read(), ext=self._INBOUND_IMAGE_CACHE_EXT)
         return None
 
     # ── Outbound ──────────────────────────────────────────────────────────
@@ -262,10 +259,11 @@ class NapCatAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        return await self._send_segments(
-            chat_id,
-            self._with_optional_reply([seg_text(content)], reply_to),
-        )
+        segments: List[Dict[str, Any]] = []
+        if reply_to:
+            segments.append(seg_reply(reply_to))
+        segments.append(seg_text(content))
+        return await self._send_segments(chat_id, segments)
 
     async def send_image(
         self,
@@ -299,10 +297,13 @@ class NapCatAdapter(BasePlatformAdapter):
         if file_field is None:
             return SendResult(success=False, error=f"unsafe or unreadable image path: {src}")
 
-        segments: List[Dict[str, Any]] = [seg_image(file_field)]
+        segments: List[Dict[str, Any]] = []
+        if reply_to:
+            segments.append(seg_reply(reply_to))
+        segments.append(seg_image(file_field))
         if caption:
             segments.append(seg_text(caption))
-        return await self._send_segments(chat_id, self._with_optional_reply(segments, reply_to))
+        return await self._send_segments(chat_id, segments)
 
     async def send_document(
         self,
@@ -395,13 +396,6 @@ class NapCatAdapter(BasePlatformAdapter):
             return SendResult(success=False, error=str(exc), retryable=True)
         mid = data.get("message_id")
         return SendResult(success=True, message_id=str(mid) if mid is not None else None)
-
-    def _with_optional_reply(
-        self, segments: List[Dict[str, Any]], reply_to: Optional[str]
-    ) -> List[Dict[str, Any]]:
-        if self.quote_replies and reply_to:
-            return [seg_reply(reply_to), *segments]
-        return segments
 
     def _to_onebot_file(self, src: str) -> Optional[str]:
         """Convert an outbound image source into an OneBot ``file`` field.
