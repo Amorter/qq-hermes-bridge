@@ -14,9 +14,12 @@ parsing, MessageEvent translation) live in ``adapter.py``.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import itertools
 import json
 import logging
+import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -130,10 +133,65 @@ class OneBotClient:
         finally:
             self._pending.pop(echo, None)
 
-        if resp.get("retcode") not in (0, 1):
-            # retcode 1 = async accepted; treat anything else as failure.
-            raise OneBotError(action, resp.get("retcode"), resp.get("msg") or resp.get("wording") or "")
+        status = resp.get("status")
+        retcode = resp.get("retcode")
+        # Success: standard ok / retcode 0, async-accepted (retcode 1), or a
+        # stream action whose wrapper sets status="ok" without a retcode.
+        if status not in ("ok", "async") and retcode not in (0, 1):
+            raise OneBotError(
+                action,
+                retcode if retcode is not None else status,
+                resp.get("msg") or resp.get("wording") or "",
+            )
         return resp.get("data") or {}
+
+    async def stream_upload(
+        self,
+        data: bytes,
+        filename: str,
+        *,
+        chunk_size: int = 256 * 1024,
+        retention_ms: int = 300_000,
+    ) -> str:
+        """Upload *data* to NapCat via the chunked stream API and return its path.
+
+        Sends the file as base64 chunks via ``upload_file_stream`` (each a small
+        WS frame, avoiding one huge frame), then finalizes with
+        ``is_complete``. NapCat assembles + SHA256-verifies the file and returns
+        a NapCat-local ``file_path`` suitable for ``upload_group_file`` /
+        ``upload_private_file`` — so this works across a Docker boundary with no
+        shared volume. Raises ``OneBotError`` if the stream API is unavailable.
+        """
+        sha256 = hashlib.sha256(data).hexdigest()
+        total_size = len(data)
+        chunks = [data[i : i + chunk_size] for i in range(0, total_size, chunk_size)] or [b""]
+        stream_id = uuid.uuid4().hex
+        total_chunks = len(chunks)
+
+        for index, chunk in enumerate(chunks):
+            await self.call_api(
+                "upload_file_stream",
+                {
+                    "stream_id": stream_id,
+                    "chunk_data": base64.b64encode(chunk).decode("ascii"),
+                    "chunk_index": index,
+                    "total_chunks": total_chunks,
+                    "file_size": total_size,
+                    "expected_sha256": sha256,
+                    "filename": filename,
+                    "file_retention": retention_ms,
+                },
+            )
+
+        result = await self.call_api(
+            "upload_file_stream", {"stream_id": stream_id, "is_complete": True}
+        )
+        path = result.get("file_path")
+        if not path:
+            raise OneBotError(
+                "upload_file_stream", "no_file_path", f"stream completion returned no file_path: {result}"
+            )
+        return path
 
     # ── Internals ─────────────────────────────────────────────────────────
 

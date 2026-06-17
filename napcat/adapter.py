@@ -28,6 +28,7 @@ Or via environment variables (override config.yaml):
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
 from pathlib import Path
@@ -322,14 +323,14 @@ class NapCatAdapter(BasePlatformAdapter):
         message_type, target = self._route(chat_id)
         name = file_name or Path(safe).name
         try:
-            if message_type == "group":
-                await self._client.call_api(
-                    "upload_group_file", {"group_id": target, "file": safe, "name": name}
-                )
-            else:
-                await self._client.call_api(
-                    "upload_private_file", {"user_id": target, "file": safe, "name": name}
-                )
+            onebot_file = await self._prepare_upload_file(safe, name)
+        except (OSError, OneBotError, ConnectionError) as exc:
+            return SendResult(success=False, error=f"file upload failed: {exc}")
+
+        action = "upload_group_file" if message_type == "group" else "upload_private_file"
+        key = "group_id" if message_type == "group" else "user_id"
+        try:
+            await self._client.call_api(action, {key: target, "file": onebot_file, "name": name})
         except OneBotError as exc:
             return SendResult(success=False, error=str(exc))
         except ConnectionError as exc:
@@ -339,6 +340,22 @@ class NapCatAdapter(BasePlatformAdapter):
         if caption:
             await self.send(chat_id, caption)
         return SendResult(success=True)
+
+    async def _prepare_upload_file(self, safe_path: str, name: str) -> str:
+        """Return the ``file`` value for upload_*_file.
+
+        Prefers NapCat's chunked stream upload (``upload_file_stream``), which
+        works for large files and across a Docker boundary and returns a
+        NapCat-local path. Falls back to inline ``base64://`` if the stream API
+        is unavailable (older NapCat).
+        """
+        with open(safe_path, "rb") as fh:
+            data = fh.read()
+        try:
+            return await self._client.stream_upload(data, name)
+        except OneBotError as exc:
+            logger.info("NapCat: stream upload unavailable (%s); falling back to base64", exc)
+            return "base64://" + base64.b64encode(data).decode("ascii")
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         """OneBot v11 has no typing indicator — no-op."""
@@ -386,8 +403,6 @@ class NapCatAdapter(BasePlatformAdapter):
         cannot see host paths); http(s) URLs pass through for NapCat to fetch.
         Returns None if a local path is unsafe to deliver.
         """
-        import base64
-
         if src.startswith("base64://"):
             return src
         if src.startswith(("http://", "https://")):

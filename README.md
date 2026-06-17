@@ -47,6 +47,8 @@ plugins:
   enabled: true
 ```
 
+> 完整部署步骤（含 **NapCat 用 Docker** 时图片/文件如何正常收发）见 [DEPLOY.md](DEPLOY.md)。
+
 ## 配置
 
 通过环境变量（写入 Hermes 的环境，如 `~/.hermes/.env`）：
