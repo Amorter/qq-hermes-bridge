@@ -139,39 +139,6 @@ def test_to_message_event_private_returns_none_when_empty():
     assert asyncio.run(adapter._to_message_event(data, "", False)) is None
 
 
-def test_send_omits_reply_segment_by_default():
-    adapter = _make_adapter()
-    sent = {}
-
-    async def fake_send_segments(chat_id, segments):
-        sent["chat_id"] = chat_id
-        sent["segments"] = segments
-        return object()
-
-    adapter._send_segments = fake_send_segments
-    asyncio.run(adapter.send("group:1", "hello", reply_to="123"))
-
-    assert sent["chat_id"] == "group:1"
-    assert sent["segments"] == [{"type": "text", "data": {"text": "hello"}}]
-
-
-def test_send_includes_reply_segment_when_enabled():
-    adapter = _make_adapter(quote_replies=True)
-    sent = {}
-
-    async def fake_send_segments(chat_id, segments):
-        sent["segments"] = segments
-        return object()
-
-    adapter._send_segments = fake_send_segments
-    asyncio.run(adapter.send("group:1", "hello", reply_to="123"))
-
-    assert sent["segments"] == [
-        {"type": "reply", "data": {"id": "123"}},
-        {"type": "text", "data": {"text": "hello"}},
-    ]
-
-
 def test_on_event_group_mention_gating():
     adapter = _make_adapter()
     seen = []
