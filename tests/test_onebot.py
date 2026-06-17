@@ -147,3 +147,101 @@ def test_call_api_not_connected():
             pass
 
     asyncio.run(run())
+
+
+def test_call_api_accepts_status_ok_without_retcode():
+    """Stream actions reply with status=ok and may omit retcode."""
+
+    async def run():
+        ws = _FakeWS()
+        client = _make_client(ws)
+        task = asyncio.ensure_future(client.call_api("upload_file_stream", {}, timeout=2))
+        await asyncio.sleep(0.01)
+        echo = ws.sent[0]["echo"]
+        client._on_frame(json.dumps({"echo": echo, "status": "ok", "data": {"x": 1}}))
+        assert await task == {"x": 1}
+
+    asyncio.run(run())
+
+
+def test_stream_upload_protocol():
+    async def run():
+        ws = _FakeWS()
+        client = _make_client(ws)
+        data = b"x" * (300 * 1024)  # 300KB → 2 chunks at 256KB
+
+        async def feeder():
+            seen = 0
+            while True:
+                await asyncio.sleep(0.005)
+                while seen < len(ws.sent):
+                    msg = ws.sent[seen]
+                    seen += 1
+                    echo = msg["echo"]
+                    params = msg["params"]
+                    if params.get("is_complete"):
+                        client._on_frame(json.dumps({
+                            "echo": echo, "status": "ok", "retcode": 0,
+                            "data": {"type": "response", "status": "file_complete",
+                                     "file_path": "/napcat/tmp/foo.bin",
+                                     "file_size": len(data), "sha256": "deadbeef"},
+                        }))
+                        return
+                    client._on_frame(json.dumps({
+                        "echo": echo, "status": "ok", "retcode": 0,
+                        "data": {"type": "stream", "status": "chunk_received",
+                                 "received_chunks": params["chunk_index"] + 1,
+                                 "total_chunks": params["total_chunks"]},
+                    }))
+
+        feeder_task = asyncio.ensure_future(feeder())
+        path = await client.stream_upload(data, "foo.bin", chunk_size=256 * 1024)
+        await feeder_task
+
+        assert path == "/napcat/tmp/foo.bin"
+        chunk_calls = [m for m in ws.sent if "chunk_data" in m["params"]]
+        complete_calls = [m for m in ws.sent if m["params"].get("is_complete")]
+        assert len(chunk_calls) == 2
+        assert len(complete_calls) == 1
+        first = chunk_calls[0]["params"]
+        assert first["total_chunks"] == 2
+        assert first["file_size"] == len(data)
+        assert first["chunk_index"] == 0
+        assert len(first["expected_sha256"]) == 64  # sha256 hex
+        assert first["filename"] == "foo.bin"
+
+    asyncio.run(run())
+
+
+def test_stream_upload_raises_without_file_path():
+    async def run():
+        ws = _FakeWS()
+        client = _make_client(ws)
+
+        async def feeder():
+            seen = 0
+            while True:
+                await asyncio.sleep(0.005)
+                while seen < len(ws.sent):
+                    msg = ws.sent[seen]
+                    seen += 1
+                    echo = msg["echo"]
+                    if msg["params"].get("is_complete"):
+                        # completion without file_path → should raise
+                        client._on_frame(json.dumps({
+                            "echo": echo, "status": "ok", "retcode": 0,
+                            "data": {"type": "response", "status": "file_complete"},
+                        }))
+                        return
+                    client._on_frame(json.dumps({"echo": echo, "status": "ok", "retcode": 0, "data": {}}))
+
+        feeder_task = asyncio.ensure_future(feeder())
+        try:
+            await client.stream_upload(b"hello", "h.txt", chunk_size=256 * 1024)
+            assert False, "expected OneBotError"
+        except ob.OneBotError:
+            pass
+        finally:
+            await feeder_task
+
+    asyncio.run(run())
