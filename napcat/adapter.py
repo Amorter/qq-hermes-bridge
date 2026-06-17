@@ -87,6 +87,7 @@ class NapCatAdapter(BasePlatformAdapter):
     # The gateway reads this (uppercase class attr) to smart-chunk long replies
     # before calling send(); QQ tolerates a few thousand chars per message.
     MAX_MESSAGE_LENGTH = 4500
+    _INBOUND_IMAGE_CACHE_EXT = ".napimg"
 
     def __init__(self, config, **kwargs):
         super().__init__(config, Platform(PLATFORM_NAME))
@@ -236,7 +237,7 @@ class NapCatAdapter(BasePlatformAdapter):
         url = img.get("url")
         if url:
             try:
-                return await cache_image_from_url(url)
+                return await cache_image_from_url(url, ext=self._INBOUND_IMAGE_CACHE_EXT)
             except Exception as exc:  # noqa: BLE001 — fall back to get_image below
                 logger.debug("NapCat: image URL fetch failed (%s); trying get_image", exc)
         # Fallback: resolve bytes by file id via NapCat's get_image.
@@ -246,7 +247,7 @@ class NapCatAdapter(BasePlatformAdapter):
             local = info.get("file")
             if local and os.path.isfile(local):
                 with open(local, "rb") as fh:
-                    return cache_image_from_bytes(fh.read())
+                    return cache_image_from_bytes(fh.read(), ext=self._INBOUND_IMAGE_CACHE_EXT)
         return None
 
     # ── Outbound ──────────────────────────────────────────────────────────
