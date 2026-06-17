@@ -1,0 +1,41 @@
+name: napcat
+label: NapCat (OneBot)
+kind: platform
+version: 1.0.0
+description: >
+  NapCat / OneBot v11 gateway adapter for Hermes Agent.
+  Connects to a NapCat forward-WebSocket server and relays QQ group / private
+  messages (text, images, files) to and from the Hermes agent. Images are
+  delivered to the agent's vision; files are sent via OneBot upload_*_file.
+  Uses aiohttp (bundled with Hermes) — no extra dependencies.
+author: Amorter
+requires_env:
+  - name: ONEBOT_WS_URL
+    description: "NapCat forward-WebSocket URL (e.g. ws://127.0.0.1:3001)"
+    prompt: "NapCat forward-WS URL"
+    password: false
+optional_env:
+  - name: ONEBOT_ACCESS_TOKEN
+    description: "OneBot access token (only if NapCat is configured to require one)"
+    prompt: "OneBot access token"
+    password: true
+  - name: BOT_QQ
+    description: "This bot's QQ number — used for @-mention detection and self-message filtering"
+    prompt: "Bot QQ number"
+    password: false
+  - name: NAPCAT_REQUIRE_MENTION
+    description: "In groups, only respond when @-mentioned (true/false, default: true)"
+    prompt: "Require @-mention in groups? (true/false)"
+    password: false
+  - name: NAPCAT_ALLOWED_USERS
+    description: "Comma-separated QQ numbers allowed to talk to the bot"
+    prompt: "Allowed QQ numbers (comma-separated)"
+    password: false
+  - name: NAPCAT_ALLOW_ALL_USERS
+    description: "Allow anyone to talk to the bot (true/false, dev only)"
+    prompt: "Allow all users? (true/false)"
+    password: false
+  - name: NAPCAT_HOME_CHANNEL
+    description: "Default target for cron / notification delivery (e.g. group:12345 or user:67890)"
+    prompt: "Home channel (group:<id> or user:<id>)"
+    password: false
