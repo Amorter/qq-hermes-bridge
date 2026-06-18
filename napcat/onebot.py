@@ -28,28 +28,6 @@ logger = logging.getLogger(__name__)
 EventCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 
 
-def _sanitize_for_log(value: Any, *, key: Optional[str] = None, depth: int = 0) -> Any:
-    """Return a log-friendly copy of *value* with large binary payloads summarized."""
-    if depth > 6:
-        return "<max-depth>"
-    if isinstance(value, dict):
-        return {k: _sanitize_for_log(v, key=k, depth=depth + 1) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_sanitize_for_log(v, depth=depth + 1) for v in value]
-    if isinstance(value, tuple):
-        return [_sanitize_for_log(v, depth=depth + 1) for v in value]
-    if isinstance(value, bytes):
-        return f"<bytes len={len(value)}>"
-    if isinstance(value, str):
-        if key == "chunk_data":
-            return f"<base64 len={len(value)}>"
-        if key == "file" and value.startswith("base64://"):
-            return f"base64://<len={len(value) - len('base64://')}>"
-        if len(value) > 512:
-            return f"{value[:200]}...<len={len(value)}>"
-    return value
-
-
 class OneBotError(Exception):
     """An OneBot API action returned a non-zero ``retcode``."""
 
@@ -150,9 +128,7 @@ class OneBotClient:
         fut: "asyncio.Future[Dict[str, Any]]" = loop.create_future()
         self._pending[echo] = fut
         try:
-            frame = {"action": action, "params": params or {}, "echo": echo}
-            logger.info("OneBot -> %s", json.dumps(_sanitize_for_log(frame), ensure_ascii=False, separators=(",", ":"), sort_keys=True, default=str))
-            await self._ws.send_str(json.dumps(frame))
+            await self._ws.send_str(json.dumps({"action": action, "params": params or {}, "echo": echo}))
             resp = await asyncio.wait_for(fut, timeout=timeout or self._api_timeout)
         finally:
             self._pending.pop(echo, None)
