@@ -33,6 +33,20 @@ def test_segment_builders():
     assert ob.seg_image("base64://AAA") == {"type": "image", "data": {"file": "base64://AAA"}}
 
 
+def test_sanitize_for_log_summarizes_large_payloads():
+    payload = {
+        "action": "send_group_msg",
+        "params": {
+            "group_id": 1,
+            "message": [{"type": "image", "data": {"file": "base64://" + ("A" * 2048)}}],
+            "chunk_data": "B" * 4096,
+        },
+    }
+    sanitized = ob._sanitize_for_log(payload)
+    assert sanitized["params"]["message"][0]["data"]["file"] == "base64://<len=2048>"
+    assert sanitized["params"]["chunk_data"] == "<base64 len=4096>"
+
+
 # ── parsing ───────────────────────────────────────────────────────────────
 
 def _sample_message():

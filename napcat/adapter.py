@@ -29,6 +29,7 @@ Or via environment variables (override config.yaml):
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 from pathlib import Path
@@ -74,6 +75,24 @@ def _read_ws_url(extra: Dict[str, Any]) -> str:
     return os.getenv("ONEBOT_WS_URL") or extra.get("ws_url") or DEFAULT_WS_URL
 
 
+def _summarize_segments(segments: List[Dict[str, Any]]) -> str:
+    """Render outbound OneBot message segments for debugging without huge base64 blobs."""
+    summarized: List[Dict[str, Any]] = []
+    for segment in segments:
+        item = {"type": segment.get("type"), "data": dict(segment.get("data") or {})}
+        if item["type"] == "text":
+            text = item["data"].get("text", "")
+            item["data"]["text_len"] = len(text)
+            if len(text) > 200:
+                item["data"]["text_preview"] = f"{text[:200]}...<len={len(text)}>"
+                item["data"].pop("text", None)
+        file_value = item["data"].get("file")
+        if isinstance(file_value, str) and file_value.startswith("base64://"):
+            item["data"]["file"] = f"base64://<len={len(file_value) - len('base64://')}>"
+        summarized.append(item)
+    return json.dumps(summarized, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
 class NapCatAdapter(BasePlatformAdapter):
     """OneBot v11 adapter backed by a NapCat forward-WS connection.
 
@@ -87,7 +106,6 @@ class NapCatAdapter(BasePlatformAdapter):
     # The gateway reads this (uppercase class attr) to smart-chunk long replies
     # before calling send(); QQ tolerates a few thousand chars per message.
     MAX_MESSAGE_LENGTH = 4500
-    _INBOUND_IMAGE_CACHE_EXT = ".napimg"
 
     def __init__(self, config, **kwargs):
         super().__init__(config, Platform(PLATFORM_NAME))
@@ -237,7 +255,7 @@ class NapCatAdapter(BasePlatformAdapter):
         url = img.get("url")
         if url:
             try:
-                return await cache_image_from_url(url, ext=self._INBOUND_IMAGE_CACHE_EXT)
+                return await cache_image_from_url(url)
             except Exception as exc:  # noqa: BLE001 — fall back to get_image below
                 logger.debug("NapCat: image URL fetch failed (%s); trying get_image", exc)
         # Fallback: resolve bytes by file id via NapCat's get_image.
@@ -247,7 +265,7 @@ class NapCatAdapter(BasePlatformAdapter):
             local = info.get("file")
             if local and os.path.isfile(local):
                 with open(local, "rb") as fh:
-                    return cache_image_from_bytes(fh.read(), ext=self._INBOUND_IMAGE_CACHE_EXT)
+                    return cache_image_from_bytes(fh.read())
         return None
 
     # ── Outbound ──────────────────────────────────────────────────────────
@@ -263,6 +281,13 @@ class NapCatAdapter(BasePlatformAdapter):
         if reply_to:
             segments.append(seg_reply(reply_to))
         segments.append(seg_text(content))
+        logger.info(
+            "NapCat send(text): chat_id=%s reply_to=%s text_len=%s segments=%s",
+            chat_id,
+            reply_to,
+            len(content),
+            _summarize_segments(segments),
+        )
         return await self._send_segments(chat_id, segments)
 
     async def send_image(
@@ -303,6 +328,15 @@ class NapCatAdapter(BasePlatformAdapter):
         segments.append(seg_image(file_field))
         if caption:
             segments.append(seg_text(caption))
+        logger.info(
+            "NapCat send(image): chat_id=%s reply_to=%s src=%s onebot_file=%s caption_len=%s segments=%s",
+            chat_id,
+            reply_to,
+            src,
+            "base64://<omitted>" if isinstance(file_field, str) and file_field.startswith("base64://") else file_field,
+            len(caption) if caption else 0,
+            _summarize_segments(segments),
+        )
         return await self._send_segments(chat_id, segments)
 
     async def send_document(
@@ -331,6 +365,15 @@ class NapCatAdapter(BasePlatformAdapter):
         action = "upload_group_file" if message_type == "group" else "upload_private_file"
         key = "group_id" if message_type == "group" else "user_id"
         try:
+            logger.info(
+                "NapCat send(document): action=%s chat_id=%s target=%s file_path=%s upload_name=%s caption_len=%s",
+                action,
+                chat_id,
+                target,
+                safe,
+                name,
+                len(caption) if caption else 0,
+            )
             await self._client.call_api(action, {key: target, "file": onebot_file, "name": name})
         except OneBotError as exc:
             return SendResult(success=False, error=str(exc))
@@ -353,6 +396,12 @@ class NapCatAdapter(BasePlatformAdapter):
         with open(safe_path, "rb") as fh:
             data = fh.read()
         try:
+            logger.info(
+                "NapCat upload(stream): file_path=%s upload_name=%s size=%s",
+                safe_path,
+                name,
+                len(data),
+            )
             return await self._client.stream_upload(data, name)
         except OneBotError as exc:
             logger.info("NapCat: stream upload unavailable (%s); falling back to base64", exc)
@@ -389,6 +438,13 @@ class NapCatAdapter(BasePlatformAdapter):
         action = "send_group_msg" if message_type == "group" else "send_private_msg"
         key = "group_id" if message_type == "group" else "user_id"
         try:
+            logger.info(
+                "NapCat dispatch: action=%s chat_id=%s target=%s segments=%s",
+                action,
+                chat_id,
+                target,
+                _summarize_segments(segments),
+            )
             data = await self._client.call_api(action, {key: target, "message": segments})
         except OneBotError as exc:
             return SendResult(success=False, error=str(exc))

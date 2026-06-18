@@ -6,8 +6,8 @@ otherwise.
 """
 
 import asyncio
+import json
 import os
-import tempfile
 
 import pytest
 
@@ -57,6 +57,19 @@ def test_to_onebot_file_passthrough():
     assert adapter._to_onebot_file("base64://AAA") == "base64://AAA"
     assert adapter._to_onebot_file("https://x/y.png") == "https://x/y.png"
     assert adapter._to_onebot_file("http://x/y.png") == "http://x/y.png"
+
+
+def test_summarize_segments_masks_base64_and_tracks_text_len():
+    segments = [
+        ad.seg_reply("42"),
+        ad.seg_image("base64://" + ("A" * 32)),
+        ad.seg_text("hello world"),
+    ]
+    summary = json.loads(ad._summarize_segments(segments))
+    assert summary[0] == {"type": "reply", "data": {"id": "42"}}
+    assert summary[1]["data"]["file"] == "base64://<len=32>"
+    assert summary[2]["data"]["text"] == "hello world"
+    assert summary[2]["data"]["text_len"] == 11
 
 
 # ── module-level config functions ───────────────────────────────────────────
@@ -138,35 +151,6 @@ def test_to_message_event_private_returns_none_when_empty():
         "message_id": "6",
     }
     assert asyncio.run(adapter._to_message_event(data, "", False)) is None
-
-
-def test_inbound_image_cache_uses_non_deliverable_extension():
-    adapter = _make_adapter()
-    cached = None
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as fh:
-        fh.write(b"\xff\xd8\xff\xe0" + b"\x00" * 32)
-        local_path = fh.name
-    try:
-        class _Client:
-            async def call_api(self, action, params):
-                assert action == "get_image"
-                return {"file": local_path}
-
-        adapter._client = _Client()
-        cached = asyncio.run(adapter._cache_one_image({"file": "abc"}))
-        assert cached is not None
-        assert cached.endswith(".napimg")
-        assert ad.NapCatAdapter.filter_local_delivery_paths([cached]) == []
-    finally:
-        try:
-            os.unlink(local_path)
-        except OSError:
-            pass
-        if cached and os.path.exists(cached):
-            try:
-                os.unlink(cached)
-            except OSError:
-                pass
 
 
 def test_on_event_group_mention_gating():
