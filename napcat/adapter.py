@@ -20,10 +20,13 @@ Configuration in ``config.yaml``::
             access_token: ""              # optional OneBot access token
             bot_qq: "123456789"           # this bot's QQ (for @-mention + self-filter)
             require_mention: true         # in groups, only respond when @-mentioned
+            inject_sender_id: true        # inject the verified sender QQ into the
+                                          # system prompt as a [SENDER_IDENTITY] block
 
 Or via environment variables (override config.yaml):
     ONEBOT_WS_URL, ONEBOT_ACCESS_TOKEN, BOT_QQ, NAPCAT_REQUIRE_MENTION,
-    NAPCAT_ALLOWED_USERS, NAPCAT_ALLOW_ALL_USERS, NAPCAT_HOME_CHANNEL
+    NAPCAT_ALLOWED_USERS, NAPCAT_ALLOW_ALL_USERS, NAPCAT_HOME_CHANNEL,
+    NAPCAT_INJECT_SENDER_ID
 """
 
 from __future__ import annotations
@@ -93,6 +96,31 @@ def _summarize_segments(segments: List[Dict[str, Any]]) -> str:
     return json.dumps(summarized, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
+def _build_sender_identity_block(
+    user_id: str, chat_id: str, chat_type: str
+) -> Optional[str]:
+    """Render the authoritative sender-identity block for the system prompt.
+
+    Carries only system-verified fields (QQ user id, chat route, chat type) —
+    never the user-set nickname / group card, which is freely spoofable.  The
+    block rides the ``channel_prompt`` → ``ephemeral_system_prompt`` rail so it
+    reaches the model as a system-level injection (not message text) and stays
+    out of the persisted transcript.
+
+    Returns ``None`` when no authoritative QQ is available, so we never inject
+    an empty / placeholder block.
+    """
+    if not user_id:
+        return None
+    return (
+        "[SENDER_IDENTITY verified=true]\n"
+        f"qq = {user_id}\n"
+        f"chat = {chat_id}\n"
+        f"chat_type = {chat_type}\n"
+        "[/SENDER_IDENTITY]"
+    )
+
+
 class NapCatAdapter(BasePlatformAdapter):
     """OneBot v11 adapter backed by a NapCat forward-WS connection.
 
@@ -115,6 +143,13 @@ class NapCatAdapter(BasePlatformAdapter):
         self.access_token = os.getenv("ONEBOT_ACCESS_TOKEN") or extra.get("access_token", "")
         self.bot_qq = str(os.getenv("BOT_QQ") or extra.get("bot_qq", "") or "")
         self.require_mention = _env_bool("NAPCAT_REQUIRE_MENTION", bool(extra.get("require_mention", True)))
+        # Inject the system-verified sender QQ into the system prompt via the
+        # channel_prompt → ephemeral_system_prompt rail. Default on; disable
+        # for deployments that strip PII or don't want sender identity in prompt.
+        self.inject_sender_id = _env_bool(
+            "NAPCAT_INJECT_SENDER_ID",
+            bool(extra.get("inject_sender_id", True)),
+        )
         # Per-deployment override of the chunking limit (shadows the class attr).
         override = extra.get("max_message_length")
         if override:
@@ -225,6 +260,13 @@ class NapCatAdapter(BasePlatformAdapter):
             message_id=str(data.get("message_id", "")),
         )
 
+        # System-verified sender identity, injected as a per-channel ephemeral
+        # system prompt (not message text) so the model can attribute the turn
+        # to a QQ number that can't be spoofed from message content.
+        channel_prompt: Optional[str] = None
+        if self.inject_sender_id:
+            channel_prompt = _build_sender_identity_block(user_id, chat_id, chat_type)
+
         return MessageEvent(
             text=text,
             message_type=msg_type,
@@ -234,6 +276,7 @@ class NapCatAdapter(BasePlatformAdapter):
             message_id=str(data.get("message_id", "")),
             reply_to_message_id=find_reply_id(data.get("message")),
             raw_message=data,
+            channel_prompt=channel_prompt,
         )
 
     async def _collect_images(self, message: Any) -> Tuple[List[str], List[str]]:

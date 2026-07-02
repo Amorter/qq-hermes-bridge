@@ -153,6 +153,89 @@ def test_to_message_event_private_returns_none_when_empty():
     assert asyncio.run(adapter._to_message_event(data, "", False)) is None
 
 
+def test_to_message_event_injects_sender_identity_block():
+    adapter = _make_adapter()
+    data = {
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 777,
+        "user_id": "10001",
+        "message": [{"type": "text", "data": {"text": "hello"}}],
+        "sender": {"nickname": "Bob"},
+        "message_id": "5",
+    }
+    event = asyncio.run(adapter._to_message_event(data, "hello", True))
+    cp = event.channel_prompt
+    assert cp is not None
+    assert "[SENDER_IDENTITY verified=true]" in cp
+    assert "qq = 10001" in cp
+    assert "chat = group:777" in cp
+    assert "chat_type = group" in cp
+    assert cp.rstrip().endswith("[/SENDER_IDENTITY]")
+    # The spoofable nickname must NOT appear in the identity block.
+    assert "Bob" not in cp
+
+
+def test_to_message_event_sender_identity_dm_format():
+    adapter = _make_adapter()
+    data = {
+        "post_type": "message",
+        "message_type": "private",
+        "user_id": "10001",
+        "message": [{"type": "text", "data": {"text": "hi"}}],
+        "sender": {"nickname": "Bob"},
+        "message_id": "8",
+    }
+    event = asyncio.run(adapter._to_message_event(data, "hi", False))
+    cp = event.channel_prompt
+    assert cp is not None
+    assert "qq = 10001" in cp
+    assert "chat = user:10001" in cp
+    assert "chat_type = dm" in cp
+
+
+def test_to_message_event_sender_identity_disabled():
+    adapter = _make_adapter(inject_sender_id=False)
+    data = {
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 777,
+        "user_id": "10001",
+        "message": [{"type": "text", "data": {"text": "hello"}}],
+        "sender": {"nickname": "Bob"},
+        "message_id": "5",
+    }
+    event = asyncio.run(adapter._to_message_event(data, "hello", True))
+    assert event.channel_prompt is None
+
+
+def test_to_message_event_sender_identity_absent_without_qq():
+    # No authoritative user_id → never inject an empty/placeholder block,
+    # even when the feature is enabled.
+    adapter = _make_adapter()
+    data = {
+        "post_type": "message",
+        "message_type": "group",
+        "group_id": 777,
+        "user_id": "",
+        "message": [{"type": "text", "data": {"text": "hello"}}],
+        "sender": {"nickname": "Bob"},
+        "message_id": "5",
+    }
+    event = asyncio.run(adapter._to_message_event(data, "hello", True))
+    assert event.channel_prompt is None
+
+
+def test_build_sender_identity_block_none_without_user_id():
+    assert ad._build_sender_identity_block("", "group:1", "group") is None
+    block = ad._build_sender_identity_block("42", "user:42", "dm")
+    assert block is not None
+    assert "qq = 42" in block
+    assert "chat = user:42" in block
+    assert "chat_type = dm" in block
+    assert block.endswith("[/SENDER_IDENTITY]")
+
+
 def test_on_event_group_mention_gating():
     adapter = _make_adapter()
     seen = []

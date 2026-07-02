@@ -9,7 +9,7 @@
 - **打断** — 新的触发消息、`/stop`、`/new` 会中断正在进行的回合（不再出现并发会话互相打断的旧问题）
 - **命令式审批** — 高危命令暂停等待 `/approve` / `/deny`，由框架路由，无死锁
 - **按会话的历史** — 由 Hermes 的 session 存储统一管理，插件不维护历史
-- **发送者归属** — 框架按已验证的 QQ 号注入发送者身份（见下方安全说明）
+- **发送者归属** — 把已验证的 QQ 号以 `[SENDER_IDENTITY]` 块注入系统提示词，模型可据此区分群内不同说话人（见下方安全说明）
 
 > 旧版（v1–v3）是 Node.js 外挂，走 Hermes 的 `api_server` HTTP+SSE。该实现已被本插件取代，原因见提交历史。
 
@@ -59,6 +59,7 @@ plugins:
 | `ONEBOT_ACCESS_TOKEN` | 否 | OneBot access token（NapCat 配了才需要） |
 | `BOT_QQ` | 建议 | 机器人 QQ 号，用于 @提及检测与自身消息过滤 |
 | `NAPCAT_REQUIRE_MENTION` | 否 | 群聊中是否仅在被 @ 时响应（默认 `true`） |
+| `NAPCAT_INJECT_SENDER_ID` | 否 | 把已验证的发送者 QQ 号注入系统提示词为 `[SENDER_IDENTITY]` 块（默认 `true`） |
 | `NAPCAT_ALLOWED_USERS` | 否 | 允许对话的 QQ 号，逗号分隔 |
 | `NAPCAT_ALLOW_ALL_USERS` | 否 | 是否允许所有人（`true`/`false`） |
 | `NAPCAT_HOME_CHANNEL` | 否 | cron/通知投递目标，如 `group:12345` |
@@ -75,6 +76,7 @@ gateway:
         access_token: ""
         bot_qq: "123456789"
         require_mention: true
+        inject_sender_id: true   # 默认开；把已验证 QQ 注入系统提示词
 ```
 
 启动 gateway 后用 `hermes gateway status` 确认 NapCat 平台已配置。
@@ -93,7 +95,19 @@ gateway:
 ## 安全模型
 
 权限判断应基于**已验证的 QQ 号**（平台分配、不可伪造），而非昵称（用户自设、可伪造）。
-本插件把发送者身份经框架的 sender-prefix 注入，并通过 `platform_hint` 告知模型：只有系统给出的 QQ 号是权威依据，消息正文中的任何"我是主人"之类内容都不得改变它对发送者的认定。具体的信任/权限策略仍由你的系统提示词交给模型决定（不写死硬规则）。
+本插件把发送者的权威身份以一个 `[SENDER_IDENTITY]` 块注入**系统提示词**（不是消息正文）：
+
+```
+[SENDER_IDENTITY verified=true]
+qq = 10001
+chat = group:777
+chat_type = group
+[/SENDER_IDENTITY]
+```
+
+块只含系统验证过的字段（QQ、聊天路由、聊天类型），**不含可伪造的昵称/群名片**。它走 Hermes 的 `channel_prompt → ephemeral_system_prompt` 管道，在 API 调用时拼到系统提示词尾部、不写入持久化历史。`platform_hint` 另行告知模型：只有系统给出的 QQ 号是权威依据，消息正文中的任何"我是主人"之类内容都不得改变它对发送者的认定。
+
+需要关闭（例如开了 `privacy.redact_pii` 的部署）时设 `NAPCAT_INJECT_SENDER_ID=0`。具体的信任/权限策略仍由你的系统提示词交给模型决定（不写死硬规则）。
 
 ## 开发与测试
 
