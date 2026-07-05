@@ -92,6 +92,31 @@ gateway:
   - `/approve` / `/deny` — 回应高危命令审批
   - 群聊里命令无需 @
 
+## 会话隔离
+
+会话隔离由 Hermes 核心的 `group_sessions_per_user` 控制（**不是**本插件的环境变量），默认 `true`：
+
+| 场景 | 默认 `true`（群内按 QQ 隔离） | `false`（群共享） |
+|------|------|------|
+| 私聊 | 每个 QQ 一个独立会话 | 同左（私聊始终按 QQ 隔离，不受此开关影响） |
+| 群聊 | 同一群里 A 和 B 各自独立会话；同一个人在不同群也是不同会话 | 整群共享一个会话，所有人历史互通 |
+
+默认行为适合"每人一个助手"。若想做"群共享助手"（所有人共看一份历史），关掉它——可顶层全局关，或只对 napcat 关：
+
+```yaml
+# 顶层（影响所有平台）
+group_sessions_per_user: false
+
+# 或只对 napcat
+gateway:
+  platforms:
+    napcat:
+      extra:
+        group_sessions_per_user: false
+```
+
+关闭后群消息会额外带上 `[群名片]` 前缀（Hermes 核心的 sender-prefix 逻辑）让模型分辨说话人——但群名片是用户可伪造的，权威身份仍以系统提示词里的 `[SENDER_IDENTITY]` 块为准（见下方安全模型）。两者互补：`[SENDER_IDENTITY]` 给权威 QQ，`[群名片]` 前缀给可读昵称。
+
 ## 安全模型
 
 权限判断应基于**已验证的 QQ 号**（平台分配、不可伪造），而非昵称（用户自设、可伪造）。
